@@ -21,6 +21,46 @@ func readConfig(t *testing.T, fs afero.Fs, path string) map[string]any {
 	return cfg
 }
 
+// TestWriteSettings_CompanionHookIdempotent pins re-apply behavior for hooks
+// whose executable is a companion binary (no ctxloom token, no durable
+// marker): the exact command must be deduplicated, while a user variant of the
+// same binary with different arguments survives.
+func TestWriteSettings_CompanionHookIdempotent(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	// User's own ltk registration (different args) predates ctxloom's.
+	existing := "[hooks]\n[[hooks.PreToolUse]]\nmatcher = 'Bash'\n[[hooks.PreToolUse.hooks]]\ncommand = 'ltk evaluate --config .ltk/config.yaml'\ntype = 'command'\n"
+	require.NoError(t, afero.WriteFile(fs, "/proj/.codex/config.toml", []byte(existing), 0644))
+
+	w := NewWriter(agent.SettingsOptions{FS: fs})
+	hooks := &wire.HooksConfig{
+		Unified: wire.UnifiedHooks{
+			PreTool: []wire.Hook{{Command: "ltk evaluate", Matcher: "Bash", SCM: "bundle:builtin:ltk"}},
+		},
+	}
+
+	countLtk := func() (exact, variant int) {
+		cfg := readConfig(t, fs, "/proj/.codex/config.toml")
+		for _, g := range asSlice(asMap(cfg["hooks"])["PreToolUse"]) {
+			for _, e := range asSlice(asMap(g)["hooks"]) {
+				switch asMap(e)["command"] {
+				case "ltk evaluate":
+					exact++
+				case "ltk evaluate --config .ltk/config.yaml":
+					variant++
+				}
+			}
+		}
+		return
+	}
+
+	require.NoError(t, w.WriteSettings(hooks, nil, nil, "/proj"))
+	require.NoError(t, w.WriteSettings(hooks, nil, nil, "/proj"))
+
+	exact, variant := countLtk()
+	assert.Equal(t, 1, exact, "companion hook must not duplicate across re-applies")
+	assert.Equal(t, 1, variant, "user's own variant of the same binary must survive")
+}
+
 // TestWriteSettings_HooksAndMCP verifies the writer emits codex's
 // [[hooks.EVENT]] groups and [mcp_servers] table, auto-registers ctxloom, and
 // preserves unrelated user keys.

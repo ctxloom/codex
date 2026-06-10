@@ -283,6 +283,12 @@ func addHook(cfg map[string]any, eventName string, h wire.Hook) {
 		cfg["hooks"] = hooks
 	}
 
+	// Drop any surviving entry with this exact command first. removeManagedHooks
+	// only recognizes ctxloom-token commands; hooks ctxloom writes for companion
+	// binaries (e.g. `ltk evaluate`) carry no marker and would duplicate on
+	// every re-apply. Exact match keeps user variants untouched.
+	removeExactCommand(hooks, eventName, h.Command)
+
 	entry := map[string]any{"type": "command", "command": h.Command}
 	if h.Timeout > 0 {
 		entry["timeout"] = h.Timeout
@@ -293,6 +299,36 @@ func addHook(cfg map[string]any, eventName string, h wire.Hook) {
 		group["matcher"] = h.Matcher
 	}
 	hooks[eventName] = append(asSlice(hooks[eventName]), group)
+}
+
+// removeExactCommand drops every hook entry under eventName whose command is
+// exactly cmd, pruning emptied groups and events. Companion-binary hooks carry
+// no durable marker, so identity is the verbatim command string.
+func removeExactCommand(hooks map[string]any, eventName, cmd string) {
+	var keptGroups []any
+	for _, g := range asSlice(hooks[eventName]) {
+		gm := asMap(g)
+		if gm == nil {
+			keptGroups = append(keptGroups, g)
+			continue
+		}
+		var keptEntries []any
+		for _, e := range asSlice(gm["hooks"]) {
+			c, _ := asMap(e)["command"].(string)
+			if c != cmd {
+				keptEntries = append(keptEntries, e)
+			}
+		}
+		if len(keptEntries) > 0 {
+			gm["hooks"] = keptEntries
+			keptGroups = append(keptGroups, gm)
+		}
+	}
+	if len(keptGroups) > 0 {
+		hooks[eventName] = keptGroups
+	} else {
+		delete(hooks, eventName)
+	}
 }
 
 // --- MCP removal / addition -----------------------------------------------
