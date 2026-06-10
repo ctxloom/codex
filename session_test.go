@@ -1,4 +1,4 @@
-// Hermetic tests for CodexSessionHistory. Mirrors the gemini_session_test.go
+// Hermetic tests for CodexSessionHistory. Mirrors the antigravity session_test.go
 // pattern: synthetic homeDir + afero.MemMapFs so we exercise the codex
 // rollout JSONL parser, the YYYY/MM/DD walk, and the entry-type switch
 // without touching ~/.codex.
