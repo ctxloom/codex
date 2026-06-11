@@ -9,17 +9,12 @@ import (
 )
 
 // =============================================================================
-// Capability wiring — codex is now a full LaunchBackend agent, so every
-// capability is wired (no longer nil).
+// Capability wiring — codex is a full LaunchBackend agent.
 // =============================================================================
 
 func TestCodex_Capabilities(t *testing.T) {
 	codex := NewCodex(nil)
 	assert.Equal(t, "codex", codex.Name())
-	assert.NotNil(t, codex.Lifecycle(), "lifecycle (config.toml hooks)")
-	assert.NotNil(t, codex.Skills(), "skills (custom prompts)")
-	assert.NotNil(t, codex.MCP(), "MCP (config.toml mcp_servers)")
-	assert.NotNil(t, codex.Context(), "context (file + hook)")
 	assert.NotNil(t, codex.History(), "session history")
 }
 

@@ -39,10 +39,9 @@ func NewCodex(writeSettings agent.WriteSettingsFunc) *Codex {
 	b.BaseBackend = agent.NewBaseBackend("codex", "1.0.0")
 	b.BinaryPath = "codex"
 	b.InitLaunch(
-		NewCodexLifecycle(b),
-		&CodexSkills{backend: b},
-		NewCodexContext(b),
-		NewCodexMCPManager(b),
+		agent.NewBaseLifecycle("codex", b.writeSettings),
+		&CodexSkills{},
+		agent.NewBaseContextProvider(),
 		NewCodexSessionHistory(b),
 	)
 	return b
@@ -50,18 +49,8 @@ func NewCodex(writeSettings agent.WriteSettingsFunc) *Codex {
 
 // Configure applies a decoded codex config to this backend.
 func (b *Codex) Configure(cfg agent.BackendConfig) {
-	c, ok := cfg.(*CodexConfig)
-	if !ok {
-		return
-	}
-	if c.BinaryPath != "" {
-		b.BinaryPath = c.BinaryPath
-	}
-	if len(c.Args) > 0 {
-		b.Args = c.Args
-	}
-	for k, v := range c.Env {
-		b.Env[k] = v
+	if c, ok := cfg.(*CodexConfig); ok {
+		agent.ApplyLocalCLIConfig(&b.BaseBackend, c.BinaryPath, c.Args, c.Env)
 	}
 }
 

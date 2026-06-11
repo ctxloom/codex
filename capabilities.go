@@ -1,12 +1,10 @@
 package codex
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,69 +13,8 @@ import (
 	"github.com/ctxloom/shared/agent"
 )
 
-// CodexLifecycle implements LifecycleHandler for Codex using config.toml hooks.
-// Embeds BaseLifecycle for the shared implementation.
-type CodexLifecycle struct {
-	*agent.BaseLifecycle
-	backend *Codex
-}
-
-// NewCodexLifecycle creates a new Codex lifecycle handler.
-func NewCodexLifecycle(backend *Codex) *CodexLifecycle {
-	return &CodexLifecycle{
-		BaseLifecycle: agent.NewBaseLifecycle("codex", backend.writeSettings),
-		backend:       backend,
-	}
-}
-
-// CodexMCPManager implements MCPManager for Codex CLI.
-// Embeds BaseMCPManager for the shared implementation.
-type CodexMCPManager struct {
-	*agent.BaseMCPManager
-	backend *Codex
-}
-
-// NewCodexMCPManager creates a new Codex MCP manager.
-func NewCodexMCPManager(backend *Codex) *CodexMCPManager {
-	return &CodexMCPManager{
-		BaseMCPManager: agent.NewBaseMCPManager("codex", backend.writeSettings),
-		backend:        backend,
-	}
-}
-
-// CodexContext implements ContextProvider for Codex using file + hook.
-// Embeds BaseContextProvider for the shared implementation.
-type CodexContext struct {
-	*agent.BaseContextProvider
-	backend *Codex
-}
-
-// NewCodexContext creates a new Codex context provider.
-func NewCodexContext(backend *Codex) *CodexContext {
-	return &CodexContext{
-		BaseContextProvider: agent.NewBaseContextProvider(),
-		backend:             backend,
-	}
-}
-
-// CodexSkills implements SkillRegistry for Codex CLI using custom prompts.
-type CodexSkills struct {
-	backend *Codex
-}
-
-// Register adds a skill as a Codex custom prompt.
-func (s *CodexSkills) Register(workDir string, skill agent.Skill) error {
-	return WriteCommandFiles(workDir, []agent.CommandExport{skillExport(skill)})
-}
-
-// RegisterAll adds multiple skills as Codex custom prompts.
-func (s *CodexSkills) RegisterAll(workDir string, skills []agent.Skill) error {
-	cmds := make([]agent.CommandExport, 0, len(skills))
-	for _, skill := range skills {
-		cmds = append(cmds, skillExport(skill))
-	}
-	return WriteCommandFiles(workDir, cmds)
-}
+// CodexSkills registers custom prompts for Codex CLI.
+type CodexSkills struct{}
 
 // RegisterFromContent writes custom prompts from host-resolved command exports.
 // The host maps bundle content (with codex enablement + metadata) to these
@@ -86,65 +23,14 @@ func (s *CodexSkills) RegisterFromContent(workDir string, cmds []agent.CommandEx
 	return WriteCommandFiles(workDir, cmds)
 }
 
-// skillExport maps a Skill to an enabled command export.
-func skillExport(skill agent.Skill) agent.CommandExport {
-	return agent.CommandExport{
-		Name:        skill.Name,
-		Content:     skill.Content,
-		Enabled:     true,
-		Description: skill.Description,
-	}
-}
-
-// Clear removes all ctxloom-managed prompts using the manifest. workDir is
-// unused — codex prompts live in the global $CODEX_HOME/prompts (see
-// codexPromptsDir).
-func (s *CodexSkills) Clear(workDir string) error {
-	promptsDir := codexPromptsDir()
-	manifestPath := filepath.Join(promptsDir, codexManifest)
-
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	for _, name := range strings.Split(string(data), "\n") {
-		if name = strings.TrimSpace(name); name != "" {
-			_ = os.Remove(filepath.Join(promptsDir, name))
-		}
-	}
-	return os.Remove(manifestPath)
-}
-
-// List returns registered prompt names from the manifest. workDir is unused —
-// codex prompts live in the global $CODEX_HOME/prompts (see codexPromptsDir).
-func (s *CodexSkills) List(workDir string) ([]string, error) {
-	manifestPath := filepath.Join(codexPromptsDir(), codexManifest)
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var names []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if name := strings.TrimSpace(line); name != "" {
-			names = append(names, strings.TrimSuffix(name, ".md"))
-		}
-	}
-	return names, nil
-}
-
 // CodexSessionHistory implements SessionHistory for Codex CLI. Reads from
-// $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl (default ~/.codex). The fs and
-// homeDir fields are afero injection points used by tests.
+// $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl (default ~/.codex). The
+// embedded agent.SessionStore carries the afero fs + homeDir injection points
+// used by tests (HomeDir empty => fall back to os.UserHomeDir + $CODEX_HOME)
+// and the shared transcript parse loop.
 type CodexSessionHistory struct {
 	backend *Codex
-	fs      afero.Fs
-	homeDir string // empty => fall back to os.UserHomeDir + $CODEX_HOME
+	agent.SessionStore
 }
 
 // CodexSessionHistoryOption configures CodexSessionHistory.
@@ -152,20 +38,20 @@ type CodexSessionHistoryOption func(*CodexSessionHistory)
 
 // WithCodexSessionFS sets a custom filesystem for testing.
 func WithCodexSessionFS(fs afero.Fs) CodexSessionHistoryOption {
-	return func(h *CodexSessionHistory) { h.fs = fs }
+	return func(h *CodexSessionHistory) { h.FS = fs }
 }
 
 // WithCodexSessionHomeDir sets a custom home directory for testing. Overrides
 // both os.UserHomeDir and the CODEX_HOME env var.
 func WithCodexSessionHomeDir(dir string) CodexSessionHistoryOption {
-	return func(h *CodexSessionHistory) { h.homeDir = dir }
+	return func(h *CodexSessionHistory) { h.HomeDir = dir }
 }
 
 // NewCodexSessionHistory creates a new Codex session history handler.
 func NewCodexSessionHistory(backend *Codex, opts ...CodexSessionHistoryOption) *CodexSessionHistory {
 	h := &CodexSessionHistory{
-		backend: backend,
-		fs:      afero.NewOsFs(),
+		backend:      backend,
+		SessionStore: agent.NewSessionStore(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -176,13 +62,9 @@ func NewCodexSessionHistory(backend *Codex, opts ...CodexSessionHistoryOption) *
 // GetCurrentSession returns the current/most recent session transcript.
 func (h *CodexSessionHistory) GetCurrentSession(workDir string) (*agent.Session, error) {
 	sessions, err := h.ListSessions(workDir)
-	if err != nil {
-		return nil, err
-	}
-	if len(sessions) == 0 {
-		return nil, fmt.Errorf("no sessions found")
-	}
-	return h.GetSession(workDir, sessions[0].ID)
+	return agent.MostRecentSession(sessions, err, func(m agent.SessionMeta) (*agent.Session, error) {
+		return h.GetSession(workDir, m.ID)
+	})
 }
 
 // ListSessions returns available session metadata.
@@ -193,7 +75,7 @@ func (h *CodexSessionHistory) ListSessions(workDir string) ([]agent.SessionMeta,
 	}
 
 	var sessions []agent.SessionMeta
-	err = afero.Walk(h.fs, sessionsDir, func(path string, info os.FileInfo, err error) error {
+	err = afero.Walk(agent.GetFS(h.FS), sessionsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors, continue walking
 		}
@@ -215,9 +97,7 @@ func (h *CodexSessionHistory) ListSessions(workDir string) ([]agent.SessionMeta,
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].StartTime.After(sessions[j].StartTime)
-	})
+	agent.SortSessionsMostRecentFirst(sessions)
 	return sessions, nil
 }
 
@@ -242,8 +122,8 @@ func (h *CodexSessionHistory) GetSessionByPath(path string) (*agent.Session, err
 func (h *CodexSessionHistory) getSessionsDir() (string, error) {
 	var codexHome string
 	switch {
-	case h.homeDir != "":
-		codexHome = filepath.Join(h.homeDir, ".codex")
+	case h.HomeDir != "":
+		codexHome = filepath.Join(h.HomeDir, ".codex")
 	case os.Getenv("CODEX_HOME") != "":
 		codexHome = os.Getenv("CODEX_HOME")
 	default:
@@ -255,51 +135,22 @@ func (h *CodexSessionHistory) getSessionsDir() (string, error) {
 	}
 
 	sessionsDir := filepath.Join(codexHome, "sessions")
-	if _, err := h.fs.Stat(sessionsDir); err != nil {
+	if _, err := agent.GetFS(h.FS).Stat(sessionsDir); err != nil {
 		return "", fmt.Errorf("sessions directory not found: %s", sessionsDir)
 	}
 	return sessionsDir, nil
 }
 
-// parseSessionFile reads and parses a Codex session JSONL file.
+// parseSessionFile reads and parses a Codex session JSONL file via the shared
+// SessionStore loop; malformed lines are skipped.
 func (h *CodexSessionHistory) parseSessionFile(path string) (*agent.Session, error) {
-	file, err := h.fs.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open session file: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-
-	session := &agent.Session{
-		ID:      filepath.Base(path),
-		Entries: []agent.SessionEntry{},
-	}
-
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	return h.ParseSessionFile(path, filepath.Base(path), func(line []byte) []agent.SessionEntry {
 		entry, err := h.parseEntry(line)
-		if err != nil {
-			continue // Skip malformed entries
+		if err != nil || entry == nil {
+			return nil // Skip malformed/unknown entries
 		}
-		if entry != nil {
-			session.Entries = append(session.Entries, *entry)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to scan session file: %w", err)
-	}
-
-	if len(session.Entries) > 0 {
-		session.StartTime = session.Entries[0].Timestamp
-		session.EndTime = session.Entries[len(session.Entries)-1].Timestamp
-	}
-	return session, nil
+		return []agent.SessionEntry{*entry}
+	})
 }
 
 // codexEntry represents a raw entry from Codex's rollout JSONL.

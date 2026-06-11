@@ -29,8 +29,8 @@ func TestNewCodexSessionHistory_Defaults(t *testing.T) {
 	h := NewCodexSessionHistory(b)
 
 	assert.Same(t, b, h.backend, "backend must be wired through")
-	assert.NotNil(t, h.fs, "default fs is OS")
-	assert.Empty(t, h.homeDir, "default homeDir is empty (fall back to UserHomeDir)")
+	assert.NotNil(t, h.FS, "default fs is OS")
+	assert.Empty(t, h.HomeDir, "default homeDir is empty (fall back to UserHomeDir)")
 }
 
 func TestNewCodexSessionHistory_WithOptions(t *testing.T) {
@@ -39,8 +39,8 @@ func TestNewCodexSessionHistory_WithOptions(t *testing.T) {
 		WithCodexSessionFS(fs),
 		WithCodexSessionHomeDir("/synthetic/home"),
 	)
-	assert.Same(t, fs, h.fs)
-	assert.Equal(t, "/synthetic/home", h.homeDir)
+	assert.Same(t, fs, h.FS)
+	assert.Equal(t, "/synthetic/home", h.HomeDir)
 }
 
 // =============================================================================

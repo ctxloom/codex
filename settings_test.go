@@ -101,6 +101,54 @@ func TestWriteSettings_HooksAndMCP(t *testing.T) {
 	assert.True(t, status.MCPPresent)
 }
 
+// TestWriteSettings_MCPServerEnvPreserved verifies env vars on MCP servers
+// from config, bundles, and backend passthrough all reach [mcp_servers.NAME]
+// as an env table, matching what MCPRegistrar.Install writes.
+func TestWriteSettings_MCPServerEnvPreserved(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	w := NewWriter(agent.SettingsOptions{FS: fs})
+
+	mcp := &wire.MCPConfig{
+		Servers: map[string]wire.MCPServer{
+			"config-server": {
+				Command: "config-cmd",
+				Args:    []string{"--flag"},
+				Env:     map[string]string{"CONFIG_TOKEN": "abc123"},
+			},
+		},
+		Plugins: map[string]map[string]wire.MCPServer{
+			"codex": {
+				"plugin-server": {Command: "plugin-cmd", Env: map[string]string{"PLUGIN_KEY": "xyz"}},
+			},
+		},
+	}
+	bundleMCP := map[string]wire.MCPServer{
+		"bundle-server": {Command: "bundle-cmd", Env: map[string]string{"BUNDLE_VAR": "value"}},
+	}
+
+	require.NoError(t, w.WriteSettings(&wire.HooksConfig{}, mcp, bundleMCP, "/proj"))
+
+	cfg := readConfig(t, fs, "/proj/.codex/config.toml")
+	servers := asMap(cfg["mcp_servers"])
+	require.NotNil(t, servers)
+
+	wantEnv := map[string]map[string]any{
+		"config-server": {"CONFIG_TOKEN": "abc123"},
+		"plugin-server": {"PLUGIN_KEY": "xyz"},
+		"bundle-server": {"BUNDLE_VAR": "value"},
+	}
+	for name, want := range wantEnv {
+		entry := asMap(servers[name])
+		require.NotNil(t, entry, "%s entry written", name)
+		assert.Equal(t, want, asMap(entry["env"]), "%s env preserved", name)
+	}
+
+	// The auto-registered ctxloom server carries no env.
+	ctxloomEntry := asMap(servers[agent.MCPServerName])
+	require.NotNil(t, ctxloomEntry)
+	assert.NotContains(t, ctxloomEntry, "env", "ctxloom auto-server has no env key")
+}
+
 // TestRemoveSettings strips ctxloom-managed hooks + MCP but keeps user content.
 func TestRemoveSettings(t *testing.T) {
 	fs := afero.NewMemMapFs()

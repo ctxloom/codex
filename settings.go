@@ -50,13 +50,10 @@ type CodexHookWriter struct {
 
 func (w *CodexHookWriter) getFS() afero.Fs { return agent.GetFS(w.FS) }
 
-// HooksPath returns the path to Codex's project-level config.toml.
-func (w *CodexHookWriter) HooksPath(projectDir string) string {
+// SettingsPath returns the path to Codex's project-level config.toml.
+func (w *CodexHookWriter) SettingsPath(projectDir string) string {
 	return filepath.Join(projectDir, ".codex", "config.toml")
 }
-
-// SettingsPath returns the path to Codex's config.toml.
-func (w *CodexHookWriter) SettingsPath(projectDir string) string { return w.HooksPath(projectDir) }
 
 // WriteSettings implements SettingsWriter for Codex CLI. Hooks and MCP servers
 // are written to .codex/config.toml as the [hooks] and [mcp_servers] tables.
@@ -87,11 +84,6 @@ func (w *CodexHookWriter) WriteSettings(hooks *wire.HooksConfig, mcp *wire.MCPCo
 	addMCPServers(cfg, mcp, bundleMCP)
 
 	return w.save(settingsPath, cfg)
-}
-
-// WriteHooks implements HookWriter for Codex CLI (backwards compatible).
-func (w *CodexHookWriter) WriteHooks(cfg *wire.HooksConfig, projectDir string) error {
-	return w.WriteSettings(cfg, nil, nil, projectDir)
 }
 
 // load parses config.toml into a generic table, preserving every key. It is
@@ -236,31 +228,18 @@ func hasManagedHook(cfg map[string]any) bool {
 }
 
 // addUnifiedHooks translates unified hooks to Codex event names and adds them.
-// Codex lacks a SessionEnd event, so unified SessionEnd hooks are not emitted.
+// Codex lacks a SessionEnd event, so unified SessionEnd hooks are not emitted
+// (no route for them).
 func addUnifiedHooks(cfg map[string]any, u wire.UnifiedHooks) {
-	for _, h := range u.SessionStart {
-		addHook(cfg, "SessionStart", h)
-	}
-	for _, h := range u.PreTool {
-		addHook(cfg, "PreToolUse", h)
-	}
-	for _, h := range u.PostTool {
-		addHook(cfg, "PostToolUse", h)
-	}
-	for _, h := range u.PreShell {
-		hook := h
-		if hook.Matcher == "" {
-			hook.Matcher = "Bash"
-		}
-		addHook(cfg, "PreToolUse", hook)
-	}
-	for _, h := range u.PostFileEdit {
-		hook := h
-		if hook.Matcher == "" {
-			hook.Matcher = "Edit|Write"
-		}
-		addHook(cfg, "PostToolUse", hook)
-	}
+	agent.RouteUnifiedHooks([]agent.HookRoute{
+		{Hooks: u.SessionStart, Event: "SessionStart"},
+		{Hooks: u.PreTool, Event: "PreToolUse"},
+		{Hooks: u.PostTool, Event: "PostToolUse"},
+		{Hooks: u.PreShell, Event: "PreToolUse", DefaultMatcher: "Bash"},
+		{Hooks: u.PostFileEdit, Event: "PostToolUse", DefaultMatcher: "Edit|Write"},
+	}, func(event string, h wire.Hook) {
+		addHook(cfg, event, h)
+	})
 }
 
 // addBackendHooks adds backend-specific passthrough hooks (already keyed by
@@ -360,20 +339,20 @@ func addMCPServers(cfg map[string]any, mcp *wire.MCPConfig, bundleMCP map[string
 
 	// Auto-register ctxloom's own MCP server unless disabled.
 	if mcp == nil || mcp.ShouldAutoRegisterCtxloom() {
-		servers[agent.MCPServerName] = mcpEntry(agent.CtxloomBinary, agent.CtxloomMCPArgs)
+		servers[agent.MCPServerName] = mcpEntry(wire.MCPServer{Command: agent.CtxloomBinary, Args: agent.CtxloomMCPArgs})
 	}
 
 	// Profile-bundle servers (loaded first, can be overridden).
 	for name, server := range bundleMCP {
-		servers[name] = mcpEntry(server.Command, server.Args)
+		servers[name] = mcpEntry(server)
 	}
 
 	if mcp != nil {
 		for name, server := range mcp.Servers {
-			servers[name] = mcpEntry(server.Command, server.Args)
+			servers[name] = mcpEntry(server)
 		}
 		for name, server := range mcp.Plugins["codex"] {
-			servers[name] = mcpEntry(server.Command, server.Args)
+			servers[name] = mcpEntry(server)
 		}
 	}
 
@@ -382,15 +361,23 @@ func addMCPServers(cfg map[string]any, mcp *wire.MCPConfig, bundleMCP map[string
 	}
 }
 
-// mcpEntry builds a Codex [mcp_servers.NAME] table value.
-func mcpEntry(command string, args []string) map[string]any {
-	entry := map[string]any{"command": command}
-	if len(args) > 0 {
-		anyArgs := make([]any, len(args))
-		for i, a := range args {
+// mcpEntry builds a Codex [mcp_servers.NAME] table value. Keep the entry
+// shape (command/args/env) in sync with MCPRegistrar.Install.
+func mcpEntry(server wire.MCPServer) map[string]any {
+	entry := map[string]any{"command": server.Command}
+	if len(server.Args) > 0 {
+		anyArgs := make([]any, len(server.Args))
+		for i, a := range server.Args {
 			anyArgs[i] = a
 		}
 		entry["args"] = anyArgs
+	}
+	if len(server.Env) > 0 {
+		env := make(map[string]any, len(server.Env))
+		for k, v := range server.Env {
+			env[k] = v
+		}
+		entry["env"] = env
 	}
 	return entry
 }
