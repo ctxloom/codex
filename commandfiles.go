@@ -14,6 +14,22 @@ import (
 // is shared).
 const codexManifest = ".ctxloom-manifest"
 
+// codexHome resolves Codex's home directory: $CODEX_HOME if set (it IS the
+// .codex dir, not its parent), else ~/.codex. This is the single source of
+// truth for Codex-home precedence; codexPromptsDir, MCPRegistrar.ConfigPath
+// (global scope), and getSessionsDir all resolve through it so they stay in
+// lockstep with how codex itself locates its home.
+func codexHome() (string, error) {
+	if home := os.Getenv("CODEX_HOME"); home != "" {
+		return home, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex"), nil
+}
+
 // codexPromptsDir resolves Codex's custom-prompts directory. NOTE: unlike
 // claude/gemini (project-scoped command dirs), Codex only discovers prompts from
 // the GLOBAL, top-level $CODEX_HOME/prompts (default ~/.codex/prompts) — there is
@@ -21,13 +37,11 @@ const codexManifest = ".ctxloom-manifest"
 // Setup rewrites them, and the ctxloom manifest scopes cleanup to ctxloom's own
 // files. Resolution mirrors the session-history dir: $CODEX_HOME, else ~/.codex.
 func codexPromptsDir() string {
-	if home := os.Getenv("CODEX_HOME"); home != "" {
-		return filepath.Join(home, "prompts")
+	home, err := codexHome()
+	if err != nil {
+		return filepath.Join(".codex", "prompts") // last-resort relative
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".codex", "prompts")
-	}
-	return filepath.Join(".codex", "prompts") // last-resort relative
+	return filepath.Join(home, "prompts")
 }
 
 // WriteCommandFiles generates Codex custom-prompt files from exported prompts.
@@ -63,7 +77,7 @@ func TransformToCodexPrompt(c agent.CommandExport) string {
 		}
 		if c.ArgumentHint != "" {
 			buf.WriteString("argument-hint: ")
-			buf.WriteString(c.ArgumentHint)
+			buf.WriteString(agent.EscapeYAMLString(c.ArgumentHint))
 			buf.WriteString("\n")
 		}
 		buf.WriteString("---\n\n")

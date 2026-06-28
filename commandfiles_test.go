@@ -48,7 +48,9 @@ func TestTransformToCodexPrompt_Frontmatter(t *testing.T) {
 	})
 	assert.Contains(t, out, "---\n", "has frontmatter block")
 	assert.Contains(t, out, "description: Open a draft PR")
-	assert.Contains(t, out, "argument-hint: [TITLE=<title>]")
+	// argument-hint carries YAML-special chars ([], <>) so it must be quoted to
+	// stay a scalar rather than parse as a flow sequence (codex-code-01-003).
+	assert.Contains(t, out, `argument-hint: "[TITLE=<title>]"`)
 	assert.Contains(t, out, "$1", "{{title}} -> positional $1")
 }
 

@@ -36,17 +36,19 @@ func (r MCPRegistrar) Present(dir string, global bool) bool {
 	return err == nil
 }
 
-// ConfigPath returns the MCP config file for the scope.
+// ConfigPath returns the MCP config file for the scope. Global scope resolves
+// Codex's home via codexHome ($CODEX_HOME, else ~/.codex) so the path matches
+// where codex actually reads its global config — the same precedence used by
+// codexPromptsDir and getSessionsDir.
 func (MCPRegistrar) ConfigPath(dir string, global bool) (string, error) {
-	root := dir
 	if global {
-		home, err := os.UserHomeDir()
+		home, err := codexHome()
 		if err != nil {
 			return "", err
 		}
-		root = home
+		return filepath.Join(home, "config.toml"), nil
 	}
-	return filepath.Join(root, ".codex", "config.toml"), nil
+	return filepath.Join(dir, ".codex", "config.toml"), nil
 }
 
 // Install merges the named server into the config bytes. Idempotent; foreign
@@ -61,14 +63,7 @@ func (MCPRegistrar) Install(config []byte, name string, server wire.MCPServer) (
 		servers = map[string]any{}
 		doc["mcp_servers"] = servers
 	}
-	entry := map[string]any{"command": server.Command}
-	if len(server.Args) > 0 {
-		entry["args"] = server.Args
-	}
-	if len(server.Env) > 0 {
-		entry["env"] = server.Env
-	}
-	servers[name] = entry
+	servers[name] = mcpServerToTOMLEntry(server)
 	return toml.Marshal(doc)
 }
 

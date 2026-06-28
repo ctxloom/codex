@@ -120,21 +120,17 @@ func (h *CodexSessionHistory) GetSessionByPath(path string) (*agent.Session, err
 // The chosen dir is suffixed with /sessions and stat-checked through the injected
 // fs so tests with an empty MemMapFs see "not found" without touching the OS.
 func (h *CodexSessionHistory) getSessionsDir() (string, error) {
-	var codexHome string
-	switch {
-	case h.HomeDir != "":
-		codexHome = filepath.Join(h.HomeDir, ".codex")
-	case os.Getenv("CODEX_HOME") != "":
-		codexHome = os.Getenv("CODEX_HOME")
-	default:
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
+	var home string
+	if h.HomeDir != "" {
+		home = filepath.Join(h.HomeDir, ".codex")
+	} else {
+		var err error
+		if home, err = codexHome(); err != nil {
 			return "", fmt.Errorf("failed to get home directory: %w", err)
 		}
-		codexHome = filepath.Join(homeDir, ".codex")
 	}
 
-	sessionsDir := filepath.Join(codexHome, "sessions")
+	sessionsDir := filepath.Join(home, "sessions")
 	if _, err := agent.GetFS(h.FS).Stat(sessionsDir); err != nil {
 		return "", fmt.Errorf("sessions directory not found: %s", sessionsDir)
 	}

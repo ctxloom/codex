@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/ctxloom/shared v0.0.0-20260627164621-cc20d319d5a7
-	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/afero v1.15.0
 	github.com/stretchr/testify v1.11.1
 )

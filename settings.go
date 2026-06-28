@@ -262,11 +262,13 @@ func addHook(cfg map[string]any, eventName string, h wire.Hook) {
 		cfg["hooks"] = hooks
 	}
 
-	// Drop any surviving entry with this exact command first. removeManagedHooks
-	// only recognizes ctxloom-token commands; hooks ctxloom writes for companion
-	// binaries (e.g. `ltk evaluate`) carry no marker and would duplicate on
-	// every re-apply. Exact match keeps user variants untouched.
-	removeExactCommand(hooks, eventName, h.Command)
+	// Drop any surviving entry with this exact command AND matcher first.
+	// removeManagedHooks only recognizes ctxloom-token commands; hooks ctxloom
+	// writes for companion binaries (e.g. `ltk evaluate`) carry no marker and
+	// would duplicate on every re-apply. Matching on (command, matcher) keeps
+	// user variants untouched and lets the same command coexist under distinct
+	// matchers (e.g. an all-tools PreToolUse entry and a Bash-scoped one).
+	removeExactCommand(hooks, eventName, h.Command, h.Matcher)
 
 	entry := map[string]any{"type": "command", "command": h.Command}
 	if h.Timeout > 0 {
@@ -280,15 +282,23 @@ func addHook(cfg map[string]any, eventName string, h wire.Hook) {
 	hooks[eventName] = append(asSlice(hooks[eventName]), group)
 }
 
-// removeExactCommand drops every hook entry under eventName whose command is
-// exactly cmd, pruning emptied groups and events. Companion-binary hooks carry
-// no durable marker, so identity is the verbatim command string.
-func removeExactCommand(hooks map[string]any, eventName, cmd string) {
+// removeExactCommand drops hook entries under eventName whose command is exactly
+// cmd AND whose group matcher is exactly matcher, pruning emptied groups and
+// events. Companion-binary hooks carry no durable marker, so identity is the
+// (verbatim command, matcher) pair: this dedups true re-applies while letting
+// the same command live under different matchers (groups with a non-matching
+// matcher are left fully intact).
+func removeExactCommand(hooks map[string]any, eventName, cmd, matcher string) {
 	var keptGroups []any
 	for _, g := range asSlice(hooks[eventName]) {
 		gm := asMap(g)
 		if gm == nil {
 			keptGroups = append(keptGroups, g)
+			continue
+		}
+		gMatcher, _ := gm["matcher"].(string)
+		if gMatcher != matcher {
+			keptGroups = append(keptGroups, gm)
 			continue
 		}
 		var keptEntries []any
@@ -339,20 +349,20 @@ func addMCPServers(cfg map[string]any, mcp *wire.MCPConfig, bundleMCP map[string
 
 	// Auto-register ctxloom's own MCP server unless disabled.
 	if mcp == nil || mcp.ShouldAutoRegisterCtxloom() {
-		servers[agent.MCPServerName] = mcpEntry(wire.MCPServer{Command: agent.CtxloomBinary, Args: agent.CtxloomMCPArgs})
+		servers[agent.MCPServerName] = mcpServerToTOMLEntry(wire.MCPServer{Command: agent.CtxloomBinary, Args: agent.CtxloomMCPArgs})
 	}
 
 	// Profile-bundle servers (loaded first, can be overridden).
 	for name, server := range bundleMCP {
-		servers[name] = mcpEntry(server)
+		servers[name] = mcpServerToTOMLEntry(server)
 	}
 
 	if mcp != nil {
 		for name, server := range mcp.Servers {
-			servers[name] = mcpEntry(server)
+			servers[name] = mcpServerToTOMLEntry(server)
 		}
 		for name, server := range mcp.Plugins["codex"] {
-			servers[name] = mcpEntry(server)
+			servers[name] = mcpServerToTOMLEntry(server)
 		}
 	}
 
@@ -361,9 +371,11 @@ func addMCPServers(cfg map[string]any, mcp *wire.MCPConfig, bundleMCP map[string
 	}
 }
 
-// mcpEntry builds a Codex [mcp_servers.NAME] table value. Keep the entry
-// shape (command/args/env) in sync with MCPRegistrar.Install.
-func mcpEntry(server wire.MCPServer) map[string]any {
+// mcpServerToTOMLEntry builds a Codex [mcp_servers.NAME] table value
+// (command + optional args/env) from a wire.MCPServer. It is the single source
+// of truth for the entry shape, shared by addMCPServers and
+// MCPRegistrar.Install so the two can never drift.
+func mcpServerToTOMLEntry(server wire.MCPServer) map[string]any {
 	entry := map[string]any{"command": server.Command}
 	if len(server.Args) > 0 {
 		anyArgs := make([]any, len(server.Args))

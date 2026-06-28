@@ -26,6 +26,24 @@ func TestMCPRegistrar_ConfigPath(t *testing.T) {
 	assert.NotContains(t, g, "/proj", "global path is home-rooted")
 }
 
+// TestMCPRegistrar_ConfigPath_CodexHome verifies the global config path honors
+// $CODEX_HOME (which IS the .codex dir) so it matches where codex actually reads
+// its global config — the same precedence as codexPromptsDir/getSessionsDir
+// (codex-code-01-001). Project scope must ignore CODEX_HOME.
+func TestMCPRegistrar_ConfigPath_CodexHome(t *testing.T) {
+	t.Setenv("CODEX_HOME", "/custom/codexhome")
+
+	g, err := (MCPRegistrar{}).ConfigPath("/proj", true)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/custom/codexhome", "config.toml"), g,
+		"global config rooted at $CODEX_HOME, not ~/.codex")
+
+	p, err := (MCPRegistrar{}).ConfigPath("/proj", false)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/proj", ".codex", "config.toml"), p,
+		"project scope ignores CODEX_HOME")
+}
+
 func TestMCPRegistrar_InstallPreservesForeignTables(t *testing.T) {
 	existing := `[hooks]
 [[hooks.SessionStart]]

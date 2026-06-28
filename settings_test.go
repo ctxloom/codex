@@ -61,6 +61,41 @@ func TestWriteSettings_CompanionHookIdempotent(t *testing.T) {
 	assert.Equal(t, 1, variant, "user's own variant of the same binary must survive")
 }
 
+// TestWriteSettings_SameCommandDistinctMatchersCoexist guards codex-code-01-006:
+// one command routed to the same Codex event under two different matchers (an
+// all-tools PreToolUse from unified PreTool plus a Bash-scoped one from unified
+// PreShell) must keep BOTH groups across re-applies. Dedup keys on the
+// (command, matcher) pair, so a matcher-blind purge can no longer silently drop
+// the broader all-tools coverage. With the old command-only match the no-matcher
+// group is removed when PreShell re-adds the same command, leaving only Bash.
+func TestWriteSettings_SameCommandDistinctMatchersCoexist(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	w := NewWriter(agent.SettingsOptions{FS: fs})
+	hooks := &wire.HooksConfig{
+		Unified: wire.UnifiedHooks{
+			PreTool:  []wire.Hook{{Command: "guard run"}}, // -> PreToolUse, no matcher
+			PreShell: []wire.Hook{{Command: "guard run"}}, // -> PreToolUse, matcher "Bash"
+		},
+	}
+
+	require.NoError(t, w.WriteSettings(hooks, nil, nil, "/proj"))
+	require.NoError(t, w.WriteSettings(hooks, nil, nil, "/proj"))
+
+	byMatcher := map[string]int{}
+	cfg := readConfig(t, fs, "/proj/.codex/config.toml")
+	for _, g := range asSlice(asMap(cfg["hooks"])["PreToolUse"]) {
+		gm := asMap(g)
+		m, _ := gm["matcher"].(string)
+		for _, e := range asSlice(gm["hooks"]) {
+			if asMap(e)["command"] == "guard run" {
+				byMatcher[m]++
+			}
+		}
+	}
+	assert.Equal(t, 1, byMatcher[""], "all-tools PreToolUse coverage preserved (no matcher), not duplicated")
+	assert.Equal(t, 1, byMatcher["Bash"], "Bash-scoped PreToolUse coverage preserved, not duplicated")
+}
+
 // TestWriteSettings_HooksAndMCP verifies the writer emits codex's
 // [[hooks.EVENT]] groups and [mcp_servers] table, auto-registers ctxloom, and
 // preserves unrelated user keys.
